@@ -45,6 +45,43 @@ it('scopes activities by tenant', function (): void {
     expect(Activity::query()->forTenant($teamA)->sole()->id)->toBe($teamAActivity->id);
 });
 
+it('scopes activities by actor subject parent event prefix and recency', function (): void {
+    $actor = User::query()->create(['name' => 'Ada']);
+    $otherActor = User::query()->create(['name' => 'Grace']);
+    $post = Post::query()->create(['name' => 'Topic']);
+    $otherPost = Post::query()->create(['name' => 'Other topic']);
+    $parent = Post::query()->create(['name' => 'Parent topic']);
+    $recorder = app(ActivityRecorder::class);
+
+    $matchingActivity = $recorder->record(
+        event: 'forum.post.created',
+        subject: $post,
+        actor: $actor,
+        parent: $parent,
+    );
+    $matchingActivity->forceFill(['occurred_at' => now()->subHour()])->save();
+
+    $recorder->record('course.lesson.completed', $post, actor: $actor, parent: $parent);
+    $recorder->record('forum.post.created', $otherPost, actor: $actor, parent: $parent);
+    $recorder->record('forum.post.created', $post, actor: $otherActor, parent: $parent);
+
+    expect(Activity::query()->forActor($actor)->count())->toBe(3)
+        ->and(Activity::query()->forSubject($post)->count())->toBe(3)
+        ->and(Activity::query()->forParent($parent)->count())->toBe(4)
+        ->and(Activity::query()->eventPrefix('forum')->count())->toBe(3)
+        ->and(Activity::query()->eventPrefix(['forum.post'])->count())->toBe(3)
+        ->and(Activity::query()->occurredSince(now()->subMinutes(30))->count())->toBe(3)
+        ->and(Activity::query()
+            ->forActor($actor)
+            ->forSubject($post)
+            ->forParent($parent)
+            ->eventPrefix('forum')
+            ->occurredSince(now()->subHours(2))
+            ->sole()
+            ->id
+        )->toBe($matchingActivity->id);
+});
+
 it('exposes subject activities through the trait', function (): void {
     $post = Post::query()->create(['name' => 'Topic']);
 
